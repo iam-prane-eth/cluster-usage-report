@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-usage-report-sa
+  namespace: tcl-security
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-usage-report
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps","nodes","secrets"]
+    verbs: ["create", "update", "patch", "get", "list", "watch","delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-usage-report
+subjects:
+  - kind: ServiceAccount
+    name: cluster-usage-report-sa
+    namespace: tcl-security
+roleRef:
+  kind: ClusterRole
+  name: cluster-usage-report
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: cluster-usage-report-service
+  namespace: tcl-security
+spec:
+  template:
+    spec:
+      serviceAccountName: cluster-usage-report-sa
+      volumes:
+        - name: config
+          configMap:
+            name: security-scanning-config
+        - name: reports
+          persistentVolumeClaim:
+            claimName: scans-reports-pvc
+      containers:
+      - image: docker.io/shashankft/cluster-usage-report:v1
+        resources:
+          limits:
+            cpu: 50m
+            memory: 100Mi
+          requests:
+            cpu: 20m
+            memory: 50Mi
+        env:
+          - name: CONFIG
+            value: /etc/config
+          - name: REPORTS
+            value: /etc/reports/cluster-usage-report
+          - name: SERVICE_ACCOUNT_NAME
+            value: cluster-usage-report-sa
+          - name: PROMETHEUS_ADDRESS
+            value: http://prometheus-kube-prometheus-prometheus.tcl-monitoring.svc.cluster.local:9090
+          - name: OPENAI_BASE_URL
+            value: https://api.ai-cloud.cloudlyte.com/
+          - name: OPENAI_MODEL
+            value: meta/Llama-3.1-8B-Instruct
+        volumeMounts:
+          - mountPath: /etc/config
+            name: config
+            readOnly: true
+          - name: reports
+            mountPath: /etc/reports
+---
+apiVersion: sources.knative.dev/v1
+kind: PingSource
+metadata:
+  name: cluster-usage-report-kn-pingsource
+  namespace: tcl-security
+spec:
+  schedule: 14 7 * * *
+  data: |
+    {
+      "trigger": "PingSource"
+    }    
+  sink:
+    ref:
+      apiVersion: flows.knative.dev/v1
+      kind: Sequence
+      name: cluster-usage-report
+---
+apiVersion: flows.knative.dev/v1
+kind: Sequence
+metadata:
+  name: cluster-usage-report
+  namespace: tcl-security
+spec:
+  channelTemplate:
+    apiVersion: messaging.knative.dev/v1
+    kind: InMemoryChannel
+  steps:
+    - ref:
+        apiVersion: serving.knative.dev/v1
+        kind: Service
+        name: cluster-usage-report-service
+    - ref:
+        apiVersion: serving.knative.dev/v1
+        kind: Service
+        name: notify-service
+---
+apiVersion: v1
+data:
+  key: c2stc0JRWDFhQjhUT2ItLW9YaXJzSTA1Zw==
+kind: Secret
+metadata:
+  name: openapikey
+  namespace: tcl-security
+type: Opaque
+
+
+
+
+
+
